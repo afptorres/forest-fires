@@ -11,9 +11,18 @@ The data used comprises observations based on fires occured in Portugal between 
 
 The notebooks 'data_preparation.nb.html' and 'data_understanding.nb.html' provide the code used to complete this task and its outputs.
 
+In this task, we had to deal with some quality issues, like inconsistencies and missing values. We also created new features by fetching climate information, relating to temperature and wind.
+
+Aditionally, we performed data transformation techniques.
+
+We also provide some visualizations, useful for the understanding of the data.
+
 ## Task 2: Predictive Modelling
 
 The notebook 'predictive_modelling.nb.html' provides the code used to complete this task and its outputs.
+
+
+
 
 ## Task 3: Kaggle Competition
 
