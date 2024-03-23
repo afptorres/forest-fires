@@ -1,0 +1,865 @@
+---
+title: "Forest Fires - Data Understanding"
+output: html_notebook
+---
+
+# Data Understanding
+
+```{r}
+
+########### Import libraries ########### 
+library(tidymodels)
+library(base)
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(remotes)
+library(caret)
+
+########### Read dataset ########### 
+fires <- read_csv("data/fires_train.csv")
+str(fires)
+summary(fires)
+
+########### DATA PRE-PROCESSING ###########
+# Clean the data so is tidy
+
+# Remove variable 'alert_source' because it is not useful
+fires <- fires %>% select(-alert_source)
+str(fires)
+summary(fires)
+
+# Fill the values of the column "region" that are missing
+fires$region[(fires$region=='-' & fires$district=='Coimbra')] <- 'Beira Litoral'
+fires$region[(fires$region=='-' & fires$district=='Bragança')] <- 'Trás-os-Montes'
+fires$region[(fires$region=='-' & fires$district=='Castelo Branco')] <- 'Beira Interior'
+fires$region[(fires$region=='-' & fires$district=='Aveiro')] <- 'Entre Douro e Minho'
+fires$region[(fires$region=='-' & fires$district=='Beja')] <- 'Alentejo'
+fires$region[(fires$region=='-' & fires$district=='Lisboa')] <- 'Ribatejo e Oeste'
+fires$region[(fires$region=='-' & fires$district=='Santarém')] <- 'Ribatejo e Oeste'
+fires$region[(fires$region=='-' & fires$district=='Porto')] <- 'Entre Douro e Minho'
+fires$region[(fires$region=='-' & fires$district=='Viana do Castelo')] <- 'Entre Douro e Minho'
+
+fires$region[(fires$region=='-' & fires$municipality=='Ponte De Lima')] <- 'Entre Douro e Minho'
+
+fires$region[(fires$region=='-' & fires$district=='Vila Real')] <- 'Trás-os-Montes'
+fires$region[(fires$region=='-' & fires$district=='Viseu')] <- 'Entre Douro e Minho'
+fires$region[(fires$region=='-' & fires$district=='Braga')] <- 'Entre Douro e Minho'
+fires$region[(fires$region=='-' & fires$district=='Guarda')] <- 'Beira Interior'
+fires$region[(fires$region=='-' & fires$district=='Leiria')] <- 'Beira Litoral'
+fires$region[(fires$region=='-' & fires$district=='Faro')] <- 'Algarve'
+fires$region[(fires$region=='-' & fires$district=='Portalegre')] <- 'Alentejo'
+fires$region[(fires$region=='-' & fires$district=='Setúbal')] <- 'Ribatejo e Oeste'
+fires$region[(fires$region=='-' & fires$district=='Évora')] <- 'Alentejo'
+str(fires)
+summary(fires)
+
+# Transform values of latitude and longitude to the same format. Delimitador ":"
+fires$lat <- chartr('º', ':', fires$lat)
+fires$lat <- chartr("'", ':', fires$lat)
+fires$lat <- gsub('::', '', fires$lat)
+
+fires$lon <- chartr('º', ':', fires$lon)
+fires$lon <- chartr("'", ':', fires$lon)
+fires$lon <- gsub('::', '', fires$lon)
+
+# Transform all values to DMS format
+fires$lat <- sub(':','º',fires$lat)
+fires$lat <- sub(':',"'",fires$lat)
+#fires$lat <- paste0(fires$lat, "''")
+
+fires$lon <- sub(':','º',fires$lon)
+fires$lon <- sub(':',"'",fires$lon)
+#fires$lon <- paste0(fires$lon, "''")
+
+# Remove the following string in lat "1900-01-01 "
+fires$lat <- gsub('1900-01-01 ', '', fires$lat)
+
+# Transform values from DMS to DD format
+
+# Create a new column with the values of the hours in latitude
+horasLat <- unlist(gregexpr("º", fires$lat)) # returns the position in the string of that char
+fires$horasLat <- substring(fires$lat, first=1, last=horasLat - 1)
+
+# Create a new column with the values of the minutes in latitude
+minLat <- unlist(gregexpr("'", fires$lat)) # returns the position in the string of that char
+fires$minLat <- substring(fires$lat, first=horasLat + 1, last=minLat - 1)
+
+# Create a new column with the values of the seconds in latitude
+segLat <- length(fires$lat)
+fires$segLat <- substring(fires$lat, first=minLat + 1, last=segLat)
+
+# Change the type of the columns hours, minutes, seconds of latitude to Integer
+fires[c(21, 22, 23)] <- lapply(fires[c(21, 22, 23)], as.integer) 
+typeof(fires$segLat)
+
+# Calculate latitude from DMS to DD format
+fires$lat <- fires$horasLat + (fires$minLat/60) + (fires$segLat/3600)
+
+# Create a new column with the values of the hours in longitude
+horasLon <- unlist(gregexpr("º", fires$lon)) # returns the position in the string of that char
+fires$horasLon <- substring(fires$lon, first=1, last=horasLon - 1)
+
+# Create a new column with the values of the minutes in longitude
+minLon <- unlist(gregexpr("'", fires$lon)) # returns the position in the string of that char
+fires$minLon <- substring(fires$lon, first=horasLon + 1, last=minLon - 1)
+
+# Create a new column with the values of the seconds in longitude
+segLon <- length(fires$lon)
+fires$segLon <- substring(fires$lon, first=minLon + 1, last=segLon)
+
+# Change the type of the columns hours, minutes, seconds of longitude to Integer
+fires[c(24, 25, 26)] <- lapply(fires[c(24, 25, 26)], as.integer) 
+typeof(fires$segLon)
+
+# Calculate longitude from DMS to DD format
+fires$lon <- (fires$horasLon + (fires$minLon/60) + (fires$segLon/3600))*(-1)
+
+# Read data metheorological data.
+meteo <- read_csv("meteo.csv")
+str(meteo)
+summary(meteo)
+
+fires <- mutate(fires, station_ID = NA)
+fires <- mutate(fires, Date = NA)
+fires <- mutate(fires, TemperatureCAvg = NA)
+fires <- mutate(fires, TemperatureCMax = NA)
+fires <- mutate(fires, TemperatureCMin = NA)
+fires <- mutate(fires, WindkmhDir = NA)
+fires <- mutate(fires, WindkmhGust = NA)
+fires <- mutate(fires, WindkmhInt = NA)
+
+# Join metheorological data with fires data
+for(i in 1:10309) { 
+  for (j in 1:9366) {
+    if (fires[i, 1]==meteo[j, 1]){
+      fires$station_ID[i] <- meteo$station_ID[j]
+      fires$Date[i] <- meteo$Date[j]
+      fires$TemperatureCAvg[i] <- meteo$TemperatureCAvg[j]
+      fires$TemperatureCMax[i] <- meteo$TemperatureCMax[j]
+      fires$TemperatureCMin[i] <- meteo$TemperatureCMin[j]
+      fires$WindkmhDir[i] <- meteo$WindkmhDir[j]
+      fires$WindkmhGust[i] <- meteo$WindkmhGust[j]
+      fires$WindkmhInt[i] <- meteo$WindkmhInt[j]
+    }
+  }
+}
+
+
+# Mean temperature of fires (mean, min, max) on each region 
+fires$MeanRegionTemperatureCAvg <- NA
+fires$MeanRegionTemperatureCMax <- NA
+fires$MeanRegionTemperatureCMin <- NA
+
+for (regiao in unique(fires$region)) {
+  fires_region_temp <- fires %>% select(id, region, TemperatureCAvg,TemperatureCMax,TemperatureCMin) %>% filter(region==regiao)
+  fires$MeanRegionTemperatureCAvg[fires$region==regiao] <- mean(fires_region_temp$TemperatureCAvg)
+  fires$MeanRegionTemperatureCMax[fires$region==regiao] <- mean(fires_region_temp$TemperatureCMax)
+  fires$MeanRegionTemperatureCMin[fires$region==regiao] <- mean(fires_region_temp$TemperatureCMin)
+}
+
+# Time that passed from alert to first_intervention, from alert to kill, from first_intervention to kill
+
+fires = subset(fires,  !is.na(fires$alert_date) & !is.na(fires$extinction_date) & !is.na(fires$firstInterv_date))
+
+fires$alert_date_complete <- NA
+fires$firstInterv_date_complete <- NA
+fires$extinction_date_complete <- NA
+
+fires$diff_alert_hour_firstInterv_hour_minute <- NA
+fires$diff_alert_hour_extinction_hour_hours <- NA
+fires$diff_firstInterv_hour_extinction_hour_hours <- NA
+
+for (i in 1:10309) {
+  
+  fires$alert_date[i] <- as.Date.POSIXct(fires$alert_date[i], tz = "UTC", "%Y-%m-%d")
+  fires$extinction_date[i] <- as.Date.POSIXct(fires$extinction_date[i], tz = "UTC", "%Y-%m-%d")
+  fires$firstInterv_date[i] <- as.Date.POSIXct(fires$firstInterv_date[i], tz = "UTC", "%Y-%m-%d")
+
+  fires$alert_date_complete[i] <- paste(fires$alert_date[i], "", fires$alert_hour[i])
+  fires$extinction_date_complete[i] <- paste(fires$extinction_date[i], "", fires$extinction_hour[i])
+  fires$firstInterv_date_complete[i] <- paste(fires$firstInterv_date[i], "", fires$firstInterv_hour[i])
+  
+  result <- grepl("NA", fires$alert_date_complete[i], fixed = TRUE)
+  result <- grepl("NA", fires$extinction_date_complete[i], fixed = TRUE)
+  result <- grepl("NA", fires$firstInterv_date_complete[i], fixed = TRUE)
+  
+  if (result==FALSE){
+    fires$diff_alert_hour_firstInterv_hour_minute[i] <- difftime(fires$firstInterv_date_complete[i] ,fires$alert_date_complete[i] , tz = "UTC", units = c("mins"))
+    fires$diff_alert_hour_extinction_hour_hours[i] <- difftime(fires$extinction_date_complete[i] ,fires$alert_date_complete[i], tz = "UTC", units = c("hours"))
+    fires$diff_firstInterv_hour_extinction_hour_hours[i] <- difftime(fires$extinction_date_complete[i] ,fires$firstInterv_date_complete[i], tz = "UTC",  units = c("hours"))  
+  }else {
+    print(i)
+  }
+}
+
+# Save info for later
+#write.csv(fires, "data/newFires.csv", row.names = FALSE)
+#fires <- read_csv("data/newFires.csv")
+```
+
+```{r}
+########### DATA VISUALIZATION ###########
+
+########### # Number of fires that occur on each region #1 ########### 
+fires_region <- select(fires,id, region)
+
+barplot(table(fires_region$region), 
+        xlab="Region", 
+        ylab="Numberoffires",
+        main="Number of fires x region", 
+        col = "#FF9900",
+        width = 0.1,
+        ylim=c(0,4000))
+```
+
+```{r}
+########### Number of fires that occur on each region #2 ########### 
+fires_region <- fires_region %>% group_by(region) %>% count()
+colnames(fires_region)[2] ="number"
+barplot(height=fires_region$number, 
+        names=fires_region$region, 
+        main="Number of fires x region", 
+        xlab="Region", 
+        ylab="Number of fires",
+        col = "#FF9900")
+```
+
+```{r}
+########### Number of fires that occur on each region #3 (Min-Max scaling) ########### 
+fires_region_normalized <- fires_region
+normalize <- preProcess(as.data.frame(fires_region_normalized), method=c("range"))
+fires_region_normalized <- predict(normalize, as.data.frame(fires_region_normalized))
+
+barplot(height=fires_region_normalized$number, 
+        names=fires_region_normalized$region, 
+        main="Number of fires x region", 
+        xlab="Region", 
+        ylab="Number of fires",
+        col = "#FF9900")
+```
+
+```{r}
+########### Number of fires that occur on district in Entre Douro e Minho ########### 
+fires_distrito <- fires[fires$region=='Entre Douro e Minho',]
+fires_distrito <- fires_distrito %>% select(region,district) 
+fires_distrito <- fires_distrito %>% group_by(district) %>% count()
+barplot(height = fires_distrito$n,
+        names = fires_distrito$district,
+        main="District of fires in the region of  \"Entre Douro e Minho\"", 
+        ylab="Number of fires",
+        xlab="District",
+        col = "#FF9900",
+        width = 0.1,
+        ylim=c(0,1300))
+
+```
+
+```{r}
+########### Number of fires that occur on each district #1 ########### 
+fires_distrito <- select(fires,district)
+
+barplot(table(fires_distrito$district), 
+        main="Number of fires x district", 
+        ylab="Number of fires",
+        xlab="District", 
+        col = "#FF9900")
+```
+
+```{r}
+########### Number of fires that occur on each district #2 ########### 
+fires_distrito <- fires %>% group_by(district) %>% count()
+colnames(fires_distrito)[2] ="number"
+barplot(height=fires_distrito$number, 
+        names=fires_distrito$district, 
+        main="Number of fires x district", 
+        xlab="District", 
+        ylab="Number of fires",
+        col = "#FF9900")
+```
+
+```{r}
+########### Number of fires that occur on each district #3 (Min-Max scaling) ########### 
+fires_distrito_normalized <- fires_distrito
+normalize <- preProcess(as.data.frame(fires_distrito_normalized), method=c("range"))
+fires_distrito_normalized <- predict(normalize, as.data.frame(fires_distrito_normalized))
+
+barplot(height=fires_distrito_normalized$number, 
+        names=fires_distrito_normalized$district, 
+        main="Number of fires x district", 
+        xlab="District", 
+        ylab="Number of fires",
+        col = "#FF9900")
+```
+
+```{r}
+########### Number of fires that occur on each municipality #1 ########### 
+fires_municipality <- select(fires,municipality)
+
+barplot(table(fires_municipality$municipality), 
+        main="Number of fires x municipality", 
+        xlab="Municipality", 
+        ylab="Number of fires",
+        col = "#FF9900")
+```
+
+```{r}
+########### Number of fires that occur on each municipality #2 ########### 
+fires_municipality <- fires %>% group_by(municipality) %>% count()
+colnames(fires_municipality)[2] ="number"
+barplot(height=fires_municipality$number, 
+        names=fires_municipality$municipality, 
+        main="Number of fires x municipality", 
+        xlab="Municipality", 
+        ylab="Number of fires",
+        col = "#FF9900")
+```
+
+```{r}
+########### Number of fires that occur on each municipality #3 (Min-Max scaling) ########### 
+fires_municipality_normalized <- fires_municipality
+normalize <- preProcess(as.data.frame(fires_municipality_normalized), method=c("range"))
+fires_municipality_normalized <- predict(normalize, as.data.frame(fires_municipality_normalized))
+
+barplot(height=fires_municipality_normalized$number, 
+        names=fires_municipality_normalized$municipality, 
+        main="Number of fires x municipality", 
+        xlab="Municipality", 
+        ylab="Number of fires",
+        col = "#FF9900")
+
+```
+
+```{r}
+########### Number of fires that occur on each parish #1 ########### 
+fires_parish <- select(fires,parish)
+
+barplot(table(fires_parish$parish), 
+        main="Number of fires x parish", 
+        xlab="Parish", 
+        ylab="Number of fires",
+        col = "#FF9900")
+```
+
+```{r}
+########### Number of fires that occur on each parish #2 ########### 
+fires_parish <- fires %>% group_by(parish) %>% count()
+colnames(fires_parish)[2] ="number"
+barplot(height=fires_parish$number, 
+        names=fires_parish$parish, 
+        main="Number of fires x parish", 
+        xlab="Parish", 
+        ylab="Number of fires",
+        col = "#FF9900")
+```
+
+```{r}
+# Number of fires that occur on each parish #3 (Min-Max scaling)
+fires_parish_normalized <- fires_parish
+normalize <- preProcess(as.data.frame(fires_parish_normalized), method=c("range"))
+fires_parish_normalized <- predict(normalize, as.data.frame(fires_parish_normalized))
+
+barplot(height=fires_parish_normalized$number, 
+        names=fires_parish_normalized$parish, 
+        main="Number of fires x parish", 
+        xlab="Parish", 
+        ylab="Number of fires",
+        col = "#FF9900")
+
+
+
+# Por um threshold para mostrar os que têm mais tendencia a incendiar.
+
+
+
+
+```
+
+```{r}
+########### Fires by intentional cause #############  
+
+fires_intentional_cause <- fires %>% group_by(intentional_cause) %>% count()
+fires_intentional_cause$intentional_cause[fires_intentional_cause$intentional_cause == 0] <- 'No'
+fires_intentional_cause$intentional_cause[fires_intentional_cause$intentional_cause == 1] <- 'Yes'
+fires_intentional_cause$intentional_cause <- as.factor(fires_intentional_cause$intentional_cause)
+
+colnames(fires_intentional_cause)[2] ="number"
+
+barplot(height=fires_intentional_cause$number, 
+        names=fires_intentional_cause$intentional_cause,
+        main="Number of fires x intentional cause", 
+        xlab="Intentional cause", 
+        ylab="Number of fires",
+        col = "#FF0000",
+        width = 0.1,
+        ylim=c(0,8000))
+
+```
+
+```{r}
+########### Fires by intentional cause x region #############  
+fires_intentional_cause <- fires %>% group_by(intentional_cause,region) %>% count()
+fires_intentional_cause$intentional_cause[fires_intentional_cause$intentional_cause == 0] <- 'No'
+fires_intentional_cause$intentional_cause[fires_intentional_cause$intentional_cause == 1] <- 'Yes'
+fires_intentional_cause$intentional_cause <- as.factor(fires_intentional_cause$intentional_cause)
+
+ggplot(fires_intentional_cause,aes(x=region,y=n,colour = intentional_cause))  + geom_point() + 
+  ggtitle("Intentional cause of fires organized by region") + xlab("Region") + ylab("Number of fires") + labs(colour = "Intentional cause")
+```
+
+```{r}
+########### Fires by intentional cause x region (2 barras na mesma) #############  
+fires_intentional_cause <- fires %>% group_by(region,intentional_cause) %>% count()
+fires_intentional_cause$intentional_cause[fires_intentional_cause$intentional_cause == 0] <- 'No'
+fires_intentional_cause$intentional_cause[fires_intentional_cause$intentional_cause == 1] <- 'Yes'
+fires_intentional_cause$intentional_cause <- as.factor(fires_intentional_cause$intentional_cause)
+
+ggplot(fires_intentional_cause, aes(region,n, fill = intentional_cause)) + geom_col() + 
+  ggtitle("Intentional cause of fires organized by region") + xlab("Region") + ylab("Number of fires") + labs(fill = "Intentional cause")
+```
+
+```{r}
+########### Fires by intentional cause x region (2 barras na mesma) Normalized #############  
+
+fires_region_normalized <- fires_intentional_cause
+normalize <- preProcess(as.data.frame(fires_region_normalized), method=c("range"))
+fires_region_normalized <- predict(normalize, as.data.frame(fires_region_normalized))
+
+ggplot(fires_region_normalized, aes(region,n, fill = intentional_cause)) + geom_col() + 
+  ggtitle("Intentional cause of fires organized by region") + xlab("Region") + ylab("Number of fires") + labs(fill = "Intentional cause")
+```
+
+```{r}
+########### Fires by intentional cause x origin x region #############  
+fires_intentional_cause <- fires %>% group_by(intentional_cause,region, origin) %>% count()
+fires_intentional_cause$intentional_cause[fires_intentional_cause$intentional_cause == 0] <- 'No'
+fires_intentional_cause$intentional_cause[fires_intentional_cause$intentional_cause == 1] <- 'Yes'
+fires_intentional_cause$intentional_cause <- as.factor(fires_intentional_cause$intentional_cause)
+
+ggplot(fires_intentional_cause,aes(x=region,y=n,colour = intentional_cause, shape=origin))  + geom_point() + 
+  ggtitle("Intentional cause and origin of fires organized by region") + xlab("Region") + ylab("Number of fires") + labs(colour = "Intentional cause", shape="Origin")
+```
+
+```{r}
+########### Fires by origin x region (2 barras) #############  
+
+fires_intentional_cause <- fires %>% group_by(region,origin) %>% count()
+fires_intentional_cause$origin <- as.factor(fires_intentional_cause$origin)
+
+ggplot(fires_intentional_cause, aes(region,n, fill = origin)) + geom_col() + 
+  ggtitle("Origin of fires organized by region") + xlab("Region") + ylab("Number of fires") + labs(colour = "Origin")
+```
+
+```{r}
+########### Fires by origin #############  
+fires_origin <- fires %>% group_by(origin) %>% count()
+colnames(fires_origin)[2] ="number"
+
+barplot(height=fires_origin$number, 
+        names=fires_origin$origin,
+        main="Number of fires x origin", 
+        xlab="Origin", 
+        ylab="Number of fires",
+        col = "#FF0000")
+```
+
+```{r}
+
+########### Fires by origin x region #############  
+fires_origin <- fires %>% group_by(region,origin) %>% count()
+
+ggplot(fires_origin,aes(x=region,y=n,colour = origin))  + geom_point() + 
+  ggtitle("Number of fires x origin x region") + xlab("Region") + ylab("Number of fires") + labs(colour = "Origin")
+```
+
+```{r}
+########### Fires and their Average temperature x region ########### 
+
+fires_temperature <- fires %>% select(id,region,TemperatureCAvg)
+
+ggplot(fires_temperature,aes(x=region,y=TemperatureCAvg)) + geom_boxplot() + 
+  ggtitle("Average temperature of fires x region") + xlab("Region") + ylab("Average Temperature")
+
+ggplot(fires_temperature,aes(x=region,y=TemperatureCAvg)) + geom_point() + 
+  ggtitle("Average temperature of fires x region") + xlab("Region") + ylab("Average Temperature")
+```
+
+```{r}
+########### Fires and their Average temperature x region x intentional cause ########### 
+fires_temperature <- fires %>% select(id,region,TemperatureCAvg,intentional_cause)
+fires_temperature$intentional_cause <- as.factor(fires_temperature$intentional_cause)
+
+ggplot(fires_temperature,aes(x=region,y=TemperatureCAvg,colour=intentional_cause)) + geom_boxplot() + 
+  ggtitle("Average temperature of fires x region") + xlab("Region") + ylab("Average Temperature")
+
+ggplot(fires_temperature,aes(x=region,y=TemperatureCAvg,colour=intentional_cause)) + geom_point() + 
+  ggtitle("Average temperature of fires x region") + xlab("Region") + ylab("Average Temperature")
+```
+
+```{r}
+########### Fires and their Average temperature x region x intentional cause x origin ########### 
+fires_temperature <- fires %>% select(id,region,TemperatureCAvg,intentional_cause, origin)
+fires_temperature$intentional_cause <- as.factor(fires_temperature$intentional_cause)
+
+ggplot(fires_temperature,aes(x=region,y=TemperatureCAvg,colour=intentional_cause, shape=origin)) + geom_point() + 
+  ggtitle("Average temperature of fires x region") + xlab("Region") + ylab("Average Temperature")
+```
+
+```{r}
+########### Fires and their Average Wind x region ########### 
+
+fires_wind <- fires %>% select(id,region,WindkmhInt)
+
+ggplot(fires_wind,aes(x=region,y=WindkmhInt)) + geom_boxplot() + 
+  ggtitle("Average wind of fires x region") + xlab("Region") + ylab("Average Wind")
+
+ggplot(fires_wind,aes(x=region,y=WindkmhInt)) + geom_point() + 
+  ggtitle("Average wind of fires x region") + xlab("Region") + ylab("Average Wind")
+```
+
+```{r}
+########### Fires and their Average Wind x region x intentional cause ########### 
+fires_wind <- fires %>% select(id,region,WindkmhInt,intentional_cause)
+fires_wind$intentional_cause <- as.factor(fires_wind$intentional_cause)
+
+ggplot(fires_wind,aes(x=region,y=WindkmhInt,colour=intentional_cause)) + geom_boxplot() + 
+  ggtitle("Average wind of fires x region") + xlab("Region") + ylab("Average Wind")
+
+ggplot(fires_wind,aes(x=region,y=WindkmhInt,colour=intentional_cause)) + geom_point() + 
+  ggtitle("Average wind of fires x region") + xlab("Region") + ylab("Average Wind")
+
+########### Fires and their Average Wind x region x intentional cause x origin ########### 
+fires_wind <- fires %>% select(id,region,WindkmhInt,intentional_cause, origin)
+fires_wind$intentional_cause <- as.factor(fires_wind$intentional_cause)
+
+ggplot(fires_wind,aes(x=region,y=WindkmhInt,colour=intentional_cause, shape=origin)) + geom_point() + 
+  ggtitle("Average wind of fires x region") + xlab("Region") + ylab("Average Wind")
+
+```
+
+```{r}
+########### Minutos entre alert_date and first_intervension ########### 
+
+time_frame <- c("Menos do que 15","Mais do que 15")
+time <- c(NA,NA)
+fires_alter_interv_less_1 <- data.frame(time_frame, time)
+as_tibble(fires_alter_interv_less_1 )
+
+valor <- fires %>% filter(fires$diff_alert_hour_firstInterv_hour_minute <= 15) %>% count()
+fires_alter_interv_less_1$time[fires_alter_interv_less_1$time_frame=='Menos do que 15'] <- valor$n
+valor <- fires %>% filter(fires$diff_alert_hour_firstInterv_hour_minute > 15) %>% count()
+fires_alter_interv_less_1$time[fires_alter_interv_less_1$time_frame=='Mais do que 15'] <- valor$n
+
+barplot(height=fires_alter_interv_less_1$time, 
+        names=fires_alter_interv_less_1$time_frame, 
+        main="Minutos entre Alert Date and First Intervension", 
+        xlab="Minutos", 
+        ylab="Number of fires",
+        col = "#FF9900")
+
+```
+
+```{r}
+
+########### # horas para os intencionais e uns para não intencionais ########### 
+fires_hours_to_kill <- fires %>% select(id, diff_alert_hour_extinction_hour_hours,intentional_cause)
+
+fires_hours_to_kill$diff_alert_hour_extinction_hour_hours <-round(fires_hours_to_kill$diff_alert_hour_extinction_hour_hours,0)
+fires_hours_to_kill <- fires_hours_to_kill %>% group_by(diff_alert_hour_extinction_hour_hours,intentional_cause) %>% count()
+
+fires_hours_to_kill$intentional_cause <- as.factor(fires_hours_to_kill$intentional_cause)
+
+ggplot(fires_hours_to_kill,aes(x=diff_alert_hour_extinction_hour_hours,y=n,colour=intentional_cause)) + geom_point() + 
+  ggtitle("Hours to kill fires x intentional cause") + xlab("Hours") + ylab("Number of fires") + labs(colour="Intentional cause")
+
+```
+
+```{r}
+########### Horas que tomou acabar com um incendio ########### 
+
+time_frame <- c("menos de 1","entre 1 e 2", "entre 2 e 3", "mais de 3")
+time <- c(NA,NA, NA,NA)
+fires_less_than24 <- data.frame(time_frame, time)
+as_tibble(fires_less_than24 )
+
+valor <- fires %>% filter(fires$diff_alert_hour_extinction_hour_hours <= 1) %>% count()
+fires_less_than24$time[fires_less_than24$time_frame=='menos de 1'] <- valor$n
+valor <- fires %>% filter(fires$diff_alert_hour_extinction_hour_hours > 1 & fires$diff_alert_hour_extinction_hour_hours <= 2) %>% count()
+fires_less_than24$time[fires_less_than24$time_frame=='entre 1 e 2'] <- valor$n
+valor <- fires %>% filter(fires$diff_alert_hour_extinction_hour_hours > 2 & fires$diff_alert_hour_extinction_hour_hours <= 3) %>% count()
+fires_less_than24$time[fires_less_than24$time_frame=='entre 2 e 3'] <- valor$n
+valor <- fires %>% filter(fires$diff_alert_hour_extinction_hour_hours > 3) %>% count()
+fires_less_than24$time[fires_less_than24$time_frame=='mais de 3'] <- valor$n
+
+barplot(height=fires_less_than24$time, 
+        names=fires_less_than24$time_frame, 
+        main="Horas que tomou acabar com um incendio",
+        xlab="Horas", 
+        ylab="Number of fires",
+        col = "#FF9900")
+
+```
+
+```{r}
+
+########### Em que meses do ano / meses / dias / horas acontecem mais fogos ########### 
+
+fires$alert_date_y <- NA
+fires$alert_date_m <- NA
+fires$alert_date_d <- NA
+fires$alert_date_h <- NA
+
+for (i in 1:9999) {
+  fires$alert_date[i] <- as.Date(fires$alert_date[i])
+  fires$alert_date_y[i] <- as.numeric(format(fires$alert_date[i], format = "%Y"))
+  fires$alert_date_m[i] <- as.numeric(format(fires$alert_date[i], format = "%m"))
+  fires$alert_date_d[i] <- as.numeric(format(fires$alert_date[i], format = "%d"))
+  fires$alert_date_h[i] <- as.numeric(format(as.POSIXct(fires$alert_hour[i]), format = "%H"))
+}  
+
+fires_years <- fires %>% group_by(alert_date_y) %>% count()
+fires_months <- fires %>% group_by(alert_date_m) %>% count()
+fires_days <- fires %>% group_by(alert_date_d) %>% count()
+fires_hours <- fires %>% group_by(alert_date_h) %>% count() 
+
+barplot(height=fires_years$n,
+        names=fires_years$alert_date_y,
+        main="Years when fires took place",
+        xlab="Years",
+        ylab="Number of fires",
+        col = "#FFFF00")
+
+fires_months$alert_date_m[fires_months$alert_date_m == 1] <- 'Jan'
+fires_months$alert_date_m[fires_months$alert_date_m == 2] <- 'Feb'
+fires_months$alert_date_m[fires_months$alert_date_m == 3] <- 'Mar'
+fires_months$alert_date_m[fires_months$alert_date_m == 4] <- 'Apr'
+fires_months$alert_date_m[fires_months$alert_date_m == 5] <- 'May'
+fires_months$alert_date_m[fires_months$alert_date_m == 6] <- 'Jun'
+fires_months$alert_date_m[fires_months$alert_date_m == 7] <- 'Jul'
+fires_months$alert_date_m[fires_months$alert_date_m == 8] <- 'Aug'
+fires_months$alert_date_m[fires_months$alert_date_m == 9] <- 'Sep'
+fires_months$alert_date_m[fires_months$alert_date_m == 10] <- 'Oct'
+fires_months$alert_date_m[fires_months$alert_date_m == 11] <- 'Nov'
+fires_months$alert_date_m[fires_months$alert_date_m == 12] <- 'Dec'
+
+barplot(height=fires_months$n,
+        names=fires_months$alert_date_m,
+        main="Months when fires took place",
+        xlab="Months",
+        ylab="Number of fires",
+        col = "#FFFF00",
+        width = 0.1,
+        ylim=c(0,2300))
+
+barplot(height=fires_days$n,
+        names=fires_days$alert_date_d,
+        main="Days when fires took place",
+        xlab="Days",
+        ylab="Number of fires",
+        col = "#FFFF00")
+
+barplot(height=fires_hours$n,
+        names=fires_hours$alert_date_h,
+        main="Hours of the day when fires took place",
+        xlab="Hour of the day",
+        ylab="Number of fires",
+        col = "#FFFF00",
+        width = 0.1,
+        ylim=c(0,1000))
+```
+
+```{r}
+
+########### Hours of the day and months when fires took place ########### 
+
+fires_hours <- fires %>% group_by(alert_date_h,alert_date_m) %>% count() 
+fires_hours$alert_date_h <- as.factor(fires_hours$alert_date_h)
+
+fires_hours$alert_date_m[fires_hours$alert_date_m == 1] <- 'Jan'
+fires_hours$alert_date_m[fires_hours$alert_date_m == 2] <- 'Feb'
+fires_hours$alert_date_m[fires_hours$alert_date_m == 3] <- 'Mar'
+fires_hours$alert_date_m[fires_hours$alert_date_m == 4] <- 'Apr'
+fires_hours$alert_date_m[fires_hours$alert_date_m == 5] <- 'May'
+fires_hours$alert_date_m[fires_hours$alert_date_m == 6] <- 'Jun'
+fires_hours$alert_date_m[fires_hours$alert_date_m == 7] <- 'Jul'
+fires_hours$alert_date_m[fires_hours$alert_date_m == 8] <- 'Aug'
+fires_hours$alert_date_m[fires_hours$alert_date_m == 9] <- 'Sep'
+fires_hours$alert_date_m[fires_hours$alert_date_m == 10] <- 'Oct'
+fires_hours$alert_date_m[fires_hours$alert_date_m == 11] <- 'Nov'
+fires_hours$alert_date_m[fires_hours$alert_date_m == 12] <- 'Dec'
+fires_hours$alert_date_m <- as.factor(fires_hours$alert_date_m)
+
+ggplot(fires_hours, aes(alert_date_h,n, fill = alert_date_m)) + geom_col() + 
+  ggtitle("Hours of the day and months when fires took place") + xlab("Hour of the day") + ylab("Number of fires") + labs(fill = "Months")
+```
+
+```{r}
+########### Intentional Cause of Fires on each month ########### 
+
+fires_months_intention <- fires %>% group_by(alert_date_m,intentional_cause) %>% count()
+fires_months_intention$alert_date_m <- as.factor(fires_months_intention$alert_date_m)
+fires_months_intention$intentional_cause <- as.factor(fires_months_intention$intentional_cause)
+
+ggplot(fires_months_intention,aes(x=alert_date_m,y=n,colour=intentional_cause)) + geom_point() + 
+  ggtitle("Intentional Cause of Fires on each month") + xlab("Months of the year") + ylab("Number of fires") + labs(colour="Intentional cause")
+
+```
+
+```{r}
+########### Origin of fires on each month ########### 
+
+fires_months_origin <- fires %>% group_by(alert_date_m,origin) %>% count()
+fires_months_origin$alert_date_m <- as.factor(fires_months_origin$alert_date_m)
+
+ggplot(fires_months_origin,aes(x=alert_date_m,y=n,colour=origin)) + geom_point() +
+  ggtitle("Origin of fires on each month") + xlab("Months of the year") + ylab("Number of fires") + labs(colour="Origin")
+```
+
+```{r}
+########### Origin and intentional cause of fires on each month ########### 
+
+fires_months_origin_intentional <- fires %>%  group_by(origin,alert_date_m,intentional_cause) %>% count()
+
+fires_months_origin_intentional <- fires_months_origin_intentional %>% arrange(desc(alert_date_m))
+
+fires_months_origin_intentional$alert_date_m[fires_months_origin_intentional$alert_date_m == 1] <- 'Jan'
+fires_months_origin_intentional$alert_date_m[fires_months_origin_intentional$alert_date_m == 2] <- 'Feb'
+fires_months_origin_intentional$alert_date_m[fires_months_origin_intentional$alert_date_m == 3] <- 'Mar'
+fires_months_origin_intentional$alert_date_m[fires_months_origin_intentional$alert_date_m == 4] <- 'Apr'
+fires_months_origin_intentional$alert_date_m[fires_months_origin_intentional$alert_date_m == 5] <- 'May'
+fires_months_origin_intentional$alert_date_m[fires_months_origin_intentional$alert_date_m == 6] <- 'Jun'
+fires_months_origin_intentional$alert_date_m[fires_months_origin_intentional$alert_date_m == 7] <- 'Jul'
+fires_months_origin_intentional$alert_date_m[fires_months_origin_intentional$alert_date_m == 8] <- 'Aug'
+fires_months_origin_intentional$alert_date_m[fires_months_origin_intentional$alert_date_m == 9] <- 'Sep'
+fires_months_origin_intentional$alert_date_m[fires_months_origin_intentional$alert_date_m == 10] <- 'Oct'
+fires_months_origin_intentional$alert_date_m[fires_months_origin_intentional$alert_date_m == 11] <- 'Nov'
+fires_months_origin_intentional$alert_date_m[fires_months_origin_intentional$alert_date_m == 12] <- 'Dec'
+fires_months_origin_intentional$alert_date_m <- as.factor(fires_months_origin_intentional$alert_date_m)
+
+fires_months_origin_intentional$alert_date_m <- as.factor(fires_months_origin_intentional$alert_date_m)
+
+fires_months_origin_intentional$intentional_cause[fires_months_origin_intentional$intentional_cause == 0] <- 'No'
+fires_months_origin_intentional$intentional_cause[fires_months_origin_intentional$intentional_cause == 1] <- 'Yes'
+
+fires_months_origin_intentional$intentional_cause <- as.factor(fires_months_origin_intentional$intentional_cause)
+
+ggplot(fires_months_origin_intentional,aes(x=alert_date_m,y=n,shape=origin,colour=intentional_cause)) + geom_point() + ylim(c(0,800)) +
+  ggtitle("Origin and intentional cause of fires on each month") + xlab("Months of the year") + ylab("Number of fires") + labs(colour="Intentional cause", shape="Origin")
+
+```
+
+```{r}
+########### Intentional Cause of Fires during the day ########### 
+
+fires_hours_intention <- fires %>% group_by(alert_date_h,intentional_cause) %>% count()
+fires_hours_intention$intentional_cause <- as.factor(fires_hours_intention$intentional_cause)
+fires_hours_intention$alert_date_h <- as.factor(fires_hours_intention$alert_date_h)
+
+ggplot(fires_hours_intention,aes(x=alert_date_h,y=n,colour=intentional_cause)) + geom_point() + 
+  ggtitle("Intentional Cause of Fires during the day") + xlab("Hours of the day") + ylab("Number of fires") + labs(colour="Intentional cause")
+
+ggplot(fires_hours_intention, aes(alert_date_h,n, fill = intentional_cause)) + geom_col() + 
+  ggtitle("Intentional Cause of Fires during the day") + xlab("Hours of the day") + ylab("Number of fires") + labs(fill="Intentional cause")
+
+```
+
+```{r}
+########### Origin of fires during the day  ########### 
+
+fires_hours_origin <- fires %>% group_by(alert_date_h,origin) %>% count()
+
+ggplot(fires_hours_origin,aes(x=alert_date_h,y=n,colour=origin)) + geom_point() + 
+  ggtitle("Origin of fires during the day") + xlab("Hours of the day") + ylab("Number of fires") + labs(colour="Origin")
+```
+
+```{r}
+
+########### Origin and intentional cause of fires during the day  ########### 
+
+fires_hours_origin_intentional <- fires %>% group_by(alert_date_h,origin, intentional_cause) %>% count()
+fires_hours_origin_intentional$intentional_cause <- as.factor(fires_hours_origin_intentional$intentional_cause)
+
+ggplot(fires_hours_origin_intentional,aes(x=alert_date_h,y=n,shape=origin,colour=intentional_cause)) + geom_point() + 
+  ggtitle("Origin and intentional cause of fires during the day") + xlab("Hours of the day") + ylab("Number of fires") + labs(colour="Intentional cause", shape="Origin")
+
+```
+
+```{r}
+
+########### Relation between intentional_cause and origin. ########### 
+fires_intention_origin <- fires %>% select(id, origin, intentional_cause)
+fires_intention_origin <- fires_intention_origin %>% group_by(intentional_cause,origin) %>% count()
+
+fires_intention_origin$intentional_cause[fires_intention_origin$intentional_cause == 0] <- 'No'
+fires_intention_origin$intentional_cause[fires_intention_origin$intentional_cause == 1] <- 'Yes'
+fires_intention_origin$intentional_cause <- as.factor(fires_intention_origin$intentional_cause)
+
+ggplot(fires_intention_origin,aes(x=origin,y=n, colour=intentional_cause))  + geom_point() + 
+  ggtitle("Number of fires x intentional cause x region") + xlab("Origin") + ylab("Number of fires") + labs(colour="Intentional Cause")
+
+ggplot(fires_intention_origin, aes(origin,n, fill = intentional_cause)) + geom_col() + ylim(c(0,6000)) + 
+  ggtitle("Intentional cause and origin of fires ") + xlab("Origin") + ylab("Number of fires") + labs(fill="Intentional Cause")
+
+
+```
+
+```{r}
+
+
+########### Region of the 50 fires that burned the most land ########### 
+fires_area <- fires %>%                                      
+  arrange(desc(total_area)) %>% 
+  group_by(total_area) %>%
+  head(50)
+
+fires_area$intentional_cause <- as.factor(fires_area$intentional_cause)
+
+ggplot(fires_area,aes(x=region,y=total_area)) + geom_point() + 
+  ggtitle("Region of the 50 fires that burned the most land") + xlab("Region") + ylab("Total area") + labs(colour="Intentional cause")
+```
+
+```{r}
+########### Region and intentional cause of the 50 fires that burned the most land ########### 
+fires_area <- fires %>%                                      
+  arrange(desc(total_area)) %>% 
+  group_by(total_area) %>%
+  head(50)
+
+fires_area$intentional_cause <- as.factor(fires_area$intentional_cause)
+
+ggplot(fires_area,aes(x=region,y=total_area,colour=intentional_cause)) + geom_point() + 
+  ggtitle("Region and intentional cause of the 50 fires that burned the most land") + xlab("Region of fires") + ylab("Total area") + labs(colour="Intentional cause")
+```
+
+```{r}
+########### Region, intentional cause and origin of the 50 fires that burned the most land ########### 
+fires_area <- fires %>%                                      
+  arrange(desc(total_area)) %>% 
+  group_by(total_area) %>%
+  head(50)
+
+fires_area$intentional_cause <- as.factor(fires_area$intentional_cause)
+
+ggplot(fires_area,aes(x=region,y=total_area,colour=intentional_cause,shape=origin)) + geom_point() + ylim(c(0,5000)) +
+  ggtitle("Region and intentional cause of the 50 fires that burned the most land") + xlab("Region") + ylab("Total area burned") + labs(colour="Intentional cause",shape="Origin")
+```
+
+```{r}
+
+
+########### Amount of total_area burned by the fires per region ########### 
+fires_area_total <- fires %>% select(region,total_area)
+fires_area_total <- fires_area_total %>% group_by(region) %>% summarise(sum(total_area,na.rm = TRUE)) 
+colnames(fires_area_total)[2] ="total_area"
+fires_area_total$total_area <- as.double(fires_area_total$total_area)
+
+barplot(height=fires_area_total$total_area, 
+        names=fires_area_total$region, 
+        main="Amount of total_area burned by the fires per region", 
+        xlab="Region", 
+        ylab="Total area burned",
+        col = "#FF9900",
+        width = 0.1,
+        ylim=c(0,17000))
+
+```
