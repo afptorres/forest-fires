@@ -9,9 +9,18 @@ The data used comprises observations based on fires occured in Portugal between 
 
 ## Task 1: Data Understanding and Preparation
 
+The notebooks 'data_preparation.nb.html' and 'data_understanding.nb.html' provide the code used to complete this task and its outputs.
+
 ## Task 2: Predictive Modelling
+
+The notebook 'predictive_modelling.nb.html' provides the code used to complete this task and its outputs.
 
 ## Task 3: Kaggle Competition
 
+The file 'deliverables/submission.csv' was produced to submit to the competition.
+
 ## Results
+
+A presentation 'deliverables/presentation.ppt' was created to expand on some of the process and to explain the results achieved.
+
 The decision of the best model was based on the evaluation of the AUC_ROC metric. We achieved the higher result with random forest.
