@@ -1,11 +1,15 @@
 # Forest Fires
 Project developed in the context of the course: Data Mining I. 
-The goal was to build a Machine Learning model to predict if a forest fire was intentional (or not).
-The data used comprises observations based on fires occured in Portugal between the years 2014 and 2015.
+The goal was to build a Machine Learning model to predict if a forest fire had intentional cause (or not).
+The data used comprises observations from fires occured in Portugal between the years 2014 and 2015.
 
 ## Motivation
 
-## Problem
+Forest fires are a critical issue that negatively affects climate change. The causes of forest fires are those oversights, accidents and negligence committed by individuals, intentional acts and natural causes. The latter is the root cause for only a minority of the fires.
+
+Their harmful impacts and effects on ecosystems can be major ones. Among them, we can mention the disappearance of native species,  the increased levels of carbon dioxide in the atmosphere, the earth’s nutrients destroyed by the ashes, and the massive loss of wildlife. 
+
+Data mining techniques can help predict the cause of the fire and, thus, better support the decision to take preventive measures to avoid tragedy. This can significantly affect resource allocation, mitigation and recovery efforts. 
 
 ## Task 1: Data Understanding and Preparation
 
